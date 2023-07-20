@@ -43,8 +43,10 @@ wss.on("connection", (socket) => {
 
     if (data.event === "joinRoom") {
       const roomName = data.roomName;
-      const room = rooms.find((r) => r.roomName === roomName);
       const usernamePlayer = data.username;
+
+      // Check if the room exists
+      const room = rooms.find((r) => r.roomName === roomName);
 
       if (room) {
         room.playersRoom.push(usernamePlayer);
@@ -67,11 +69,17 @@ wss.on("connection", (socket) => {
               });
           });
 
-        // Envoyer la mise à jour de la liste des joueurs à tous les clients de la room
+        // Send room data to the joining player
         const roomDataMessage = JSON.stringify({
           event: "getRoomDataResponse",
           playersRoom: room.playersRoom,
         });
+        const joiningPlayerSocket = players[usernamePlayer]?.socket;
+        if (joiningPlayerSocket) {
+          joiningPlayerSocket.send(roomDataMessage);
+        }
+
+        // Broadcast the updated room data to all players in the room
         rooms
           .filter((r) => r.roomName === roomName)
           .forEach((r) => {
@@ -84,6 +92,13 @@ wss.on("connection", (socket) => {
           });
 
         socket.send(playerJoinedEvent);
+      } else {
+        // Notify the player that the room does not exist
+        const roomNotFoundMessage = JSON.stringify({
+          event: "roomNotFound",
+          message: "The room does not exist.",
+        });
+        socket.send(roomNotFoundMessage);
       }
     }
 
