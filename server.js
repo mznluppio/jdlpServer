@@ -1,316 +1,274 @@
 const WebSocket = require("ws");
-
 const wss = new WebSocket.Server({ port: 8080 });
-
 console.log("Server listening on port 8080");
 
 const players = {};
-const rooms = [];
-let currentRoom;
-
-function shuffleArray(array) {
-  // Algorithme de mélange de Fisher-Yates
-  for (let i = array.length - 1; i > 0; i--) {
-    const j = Math.floor(Math.random() * (i + 1));
-    [array[i], array[j]] = [array[j], array[i]];
-  }
-  return array;
-}
+const rooms = new Map(); // Using Map for better room lookup
 
 wss.on("connection", (socket) => {
   let username;
+  let currentRoom;
 
   socket.on("message", (message) => {
     const data = JSON.parse(message);
 
-    if (data.event === "setUsername") {
-      username = data.username;
-      sessionId = data.sessionId;
-      players[username] = { socket, sessionId }; // Stocker l'objet socket avec le nom d'utilisateur
-      console.log("Nouvel utilisateur:", username, "Session ID:", sessionId);
-    }
+    switch (data.event) {
+      case "setUsername": {
+        username = data.username;
+        const sessionId = data.sessionId;
+        players[username] = { socket, sessionId };
+        console.log("Nouvel utilisateur:", username, "Session ID:", sessionId);
+        break;
+      }
 
-    if (data.event === "createRoom") {
-      const roomName = data.roomName;
-      const createdBy = data.createdBy;
-      const playersRoom = [data.createdBy];
+      case "createRoom": {
+        const { roomName, createdBy } = data;
+        const playersRoom = [createdBy];
+        rooms.set(roomName, { roomName, createdBy, playersRoom, songs: {} });
+        console.log("Nouvelle room:", roomName, createdBy, playersRoom);
+        currentRoom = roomName;
+        break;
+      }
 
-      rooms.push({ roomName, createdBy, playersRoom });
-      console.log("Nouvelle room:", roomName, createdBy, playersRoom);
+      case "joinRoom": {
+        const { roomName, username: usernamePlayer } = data;
+        const room = rooms.get(roomName);
 
-      currentRoom = roomName;
-    }
+        if (room) {
+          room.playersRoom.push(usernamePlayer);
 
-    if (data.event === "joinRoom") {
-      const roomName = data.roomName;
-      const usernamePlayer = data.username;
-
-      // Check if the room exists
-      const room = rooms.find((r) => r.roomName === roomName);
-
-      if (room) {
-        room.playersRoom.push(usernamePlayer);
-
-        const playerJoinedEvent = JSON.stringify({
-          event: "playerJoined",
-          player: usernamePlayer,
-        });
-
-        rooms
-          .filter((r) => r.roomName === roomName)
-          .forEach((r) => {
-            r.playersRoom
-              .filter((p) => p !== usernamePlayer)
-              .forEach((p) => {
-                const player = players[p];
-                if (player) {
-                  player.socket.send(playerJoinedEvent);
-                }
-              });
+          const playerJoinedEvent = JSON.stringify({
+            event: "playerJoined",
+            player: usernamePlayer,
           });
 
-        // Send room data to the joining player
-        const roomDataMessage = JSON.stringify({
-          event: "getRoomDataResponse",
-          playersRoom: room.playersRoom,
-        });
-        const joiningPlayerSocket = players[usernamePlayer]?.socket;
-        if (joiningPlayerSocket) {
-          joiningPlayerSocket.send(roomDataMessage);
-        }
-
-        // Broadcast the updated room data to all players in the room
-        rooms
-          .filter((r) => r.roomName === roomName)
-          .forEach((r) => {
-            r.playersRoom.forEach((player) => {
-              const playerSocket = players[player]?.socket;
-              if (playerSocket) {
-                playerSocket.send(roomDataMessage);
+          room.playersRoom
+            .filter((p) => p !== usernamePlayer)
+            .forEach((p) => {
+              const player = players[p];
+              if (player) {
+                player.socket.send(playerJoinedEvent);
               }
             });
+
+          const roomDataMessage = JSON.stringify({
+            event: "getRoomDataResponse",
+            playersRoom: room.playersRoom,
           });
 
-        socket.send(playerJoinedEvent);
-      } else {
-        // Notify the player that the room does not exist
-        const roomNotFoundMessage = JSON.stringify({
-          event: "roomNotFound",
-          message: "The room does not exist.",
-        });
-        socket.send(roomNotFoundMessage);
+          const joiningPlayerSocket = players[usernamePlayer]?.socket;
+          if (joiningPlayerSocket) {
+            joiningPlayerSocket.send(roomDataMessage);
+          }
+
+          room.playersRoom.forEach((player) => {
+            const playerSocket = players[player]?.socket;
+            if (playerSocket) {
+              playerSocket.send(roomDataMessage);
+            }
+          });
+
+          socket.send(playerJoinedEvent);
+        } else {
+          const roomNotFoundMessage = JSON.stringify({
+            event: "roomNotFound",
+            message: "The room does not exist.",
+          });
+          socket.send(roomNotFoundMessage);
+        }
+        break;
       }
-    }
 
-    if (data.event === "getRooms") {
-      const roomListMessage = JSON.stringify({ event: "roomList", rooms });
-      socket.send(roomListMessage);
-    }
-
-    if (data.event === "getRoomData") {
-      const roomName = data.roomName;
-      const room = rooms.find((r) => r.roomName === roomName);
-
-      if (room) {
-        const roomDataMessage = JSON.stringify({
-          event: "getRoomDataResponse",
-          playersRoom: room.playersRoom,
+      case "getRooms": {
+        const roomListMessage = JSON.stringify({
+          event: "roomList",
+          rooms: Array.from(rooms.values()),
         });
-        console.log("Données que je vais envoyer", roomDataMessage);
-        socket.send(roomDataMessage);
+        socket.send(roomListMessage);
+        break;
       }
-    }
 
-    if (data.event === "startGame") {
-      const roomName = data.roomName;
+      case "getRoomData": {
+        const { roomName } = data;
+        const room = rooms.get(roomName);
 
-      // Envoyer un message à tous les clients de la room pour leur indiquer de passer au composant Game
-      const gameStartedMessage = JSON.stringify({ event: "gameStarted" });
-      rooms
-        .filter((r) => r.roomName === roomName)
-        .forEach((r) => {
-          r.playersRoom.forEach((player) => {
+        if (room) {
+          const roomDataMessage = JSON.stringify({
+            event: "getRoomDataResponse",
+            playersRoom: room.playersRoom,
+          });
+          console.log("Données que je vais envoyer", roomDataMessage);
+          socket.send(roomDataMessage);
+        }
+        break;
+      }
+
+      case "startGame": {
+        const { roomName } = data;
+        const gameStartedMessage = JSON.stringify({ event: "gameStarted" });
+        const room = rooms.get(roomName);
+
+        if (room) {
+          room.playersRoom.forEach((player) => {
             const playerSocket = players[player]?.socket;
             if (playerSocket) {
               playerSocket.send(gameStartedMessage);
             }
           });
-        });
-    }
-
-    if (data.event === "sendSong") {
-      const roomName = data.roomName;
-      const selectedSongs = data.selectedSongs;
-      const sessionId = data.sessionId;
-      let username = "Unknown Player";
-
-      // Find the username based on the session ID
-      for (const player in players) {
-        if (players[player].sessionId === sessionId) {
-          username = player;
-          break;
         }
+        break;
       }
 
-      const room = rooms.find((r) => r.roomName === roomName);
-      if (room) {
-        room.songs = room.songs || {};
-        const songsWithPlayer = selectedSongs.map((song) => ({
-          ...song,
-          player: username,
-          sessionId: sessionId,
-        }));
-        room.songs[sessionId] = songsWithPlayer;
+      case "sendSong": {
+        const { roomName, selectedSongs, sessionId } = data;
+        let username = "Unknown Player";
 
-        if (Object.keys(room.songs).length === room.playersRoom.length) {
-          const allPlayersSubmittedMessage = JSON.stringify({
-            event: "allPlayersSubmitted",
-          });
-          rooms
-            .filter((r) => r.roomName === roomName)
-            .forEach((r) => {
-              r.playersRoom.forEach((player) => {
-                const playerSocket = players[player]?.socket;
-                if (playerSocket) {
-                  playerSocket.send(allPlayersSubmittedMessage);
-                }
-              });
-            });
-
-          const songsArray = Object.values(room.songs).flat();
-          const shuffledSongs = songsArray.sort(() => Math.random() - 0.5);
-          const roomSongsMessage = JSON.stringify({
-            event: "roomSongs",
-            songs: shuffledSongs,
-          });
-          rooms
-            .filter((r) => r.roomName === roomName)
-            .forEach((r) => {
-              r.playersRoom.forEach((player) => {
-                const playerSocket = players[player]?.socket;
-                if (playerSocket) {
-                  playerSocket.send(roomSongsMessage);
-                }
-              });
-            });
+        for (const player in players) {
+          if (players[player].sessionId === sessionId) {
+            username = player;
+            break;
+          }
         }
+
+        const room = rooms.get(roomName);
+        if (room) {
+          const songsWithPlayer = selectedSongs.map((song) => ({
+            ...song,
+            player: username,
+            sessionId: sessionId,
+          }));
+          room.songs[sessionId] = songsWithPlayer;
+
+          if (Object.keys(room.songs).length === room.playersRoom.length) {
+            const allPlayersSubmittedMessage = JSON.stringify({
+              event: "allPlayersSubmitted",
+            });
+            room.playersRoom.forEach((player) => {
+              const playerSocket = players[player]?.socket;
+              if (playerSocket) {
+                playerSocket.send(allPlayersSubmittedMessage);
+              }
+            });
+
+            const songsArray = Object.values(room.songs).flat();
+            const shuffledSongs = songsArray.sort(() => Math.random() - 0.5);
+            const roomSongsMessage = JSON.stringify({
+              event: "roomSongs",
+              songs: shuffledSongs,
+            });
+            room.playersRoom.forEach((player) => {
+              const playerSocket = players[player]?.socket;
+              if (playerSocket) {
+                playerSocket.send(roomSongsMessage);
+              }
+            });
+          }
+        }
+
+        console.log("Songs received from", username);
+        break;
       }
 
-      console.log("Songs received from", username);
-    }
+      case "nextSong": {
+        const { roomName, songIndex, sessionId } = data;
+        const roomsToUpdate = Array.from(rooms.values()).filter(
+          (r) => r.roomName === roomName
+        );
 
-    if (data.event === "nextSong") {
-      const roomName = data.roomName;
-      const songIndex = data.songIndex;
+        roomsToUpdate.forEach((room) => {
+          const currentPlayerSongs = room.songs[sessionId];
+          if (currentPlayerSongs) {
+            currentPlayerSongs.forEach((song) => {
+              if (song.currentSongIndex === songIndex) {
+                song.currentSongIndex += 1;
+              }
+            });
+          }
 
-      const roomsToUpdate = rooms.filter((r) => r.roomName === roomName);
-      roomsToUpdate.forEach((r) => {
-        // Update the song progress for the player who sent the nextSong event
-        const currentPlayerSessionId = data.sessionId;
-        r.songs = r.songs || {};
-        if (r.songs[currentPlayerSessionId]) {
-          r.songs[currentPlayerSessionId].forEach((song) => {
-            if (song.currentSongIndex === songIndex) {
-              song.currentSongIndex += 1; // Move to the next song for the player
-            }
+          const allSongsPlayed = room.playersRoom.every((player) => {
+            const playerSongs = room.songs[player];
+            return (
+              playerSongs &&
+              playerSongs.every((song) => song.currentSongIndex === song.totalSongs - 1)
+            );
           });
-        }
 
-        // Check if all players have played all songs
-        const allSongsPlayed = r.playersRoom.every((player) => {
-          const playerSongs = r.songs[player];
-          return (
-            playerSongs &&
-            playerSongs.every(
-              (song) => song.currentSongIndex === song.totalSongs - 1
-            )
-          );
-        });
+          if (allSongsPlayed) {
+            const endGameMessage = JSON.stringify({ event: "endGame" });
+            room.playersRoom.forEach((player) => {
+              const playerSocket = players[player]?.socket;
+              if (playerSocket) {
+                playerSocket.send(endGameMessage);
+              }
+            });
+            console.log("All songs have been played. Sending 'endGame' event.");
+          }
 
-        if (allSongsPlayed) {
-          const endGameMessage = JSON.stringify({ event: "endGame" });
-          r.playersRoom.forEach((player) => {
+          const nextSongMessage = JSON.stringify({ event: "nextSong", songIndex });
+          room.playersRoom.forEach((player) => {
             const playerSocket = players[player]?.socket;
             if (playerSocket) {
-              playerSocket.send(endGameMessage);
+              playerSocket.send(nextSongMessage);
             }
           });
-          console.log("All songs have been played. Sending 'endGame' event.");
-        }
-      });
-
-      // Broadcast the nextSong event to all clients in the room
-      const nextSongMessage = JSON.stringify({ event: "nextSong", songIndex });
-      roomsToUpdate.forEach((r) => {
-        r.playersRoom.forEach((player) => {
-          const playerSocket = players[player]?.socket;
-          if (playerSocket) {
-            playerSocket.send(nextSongMessage);
-          }
         });
-      });
-    }
+        break;
+      }
 
-    if (data.event === "revealPlayer") {
-      const roomName = data.roomName;
+      case "revealPlayer": {
+        const { roomName } = data;
+        const revealPlayerMessage = JSON.stringify({
+          event: "revealPlayer",
+        });
 
-      const revealPlayerMessage = JSON.stringify({
-        event: "revealPlayer",
-      });
-
-      // Broadcast the revealPlayer event to all clients in the room
-      rooms
-        .filter((r) => r.roomName === roomName)
-        .forEach((r) => {
-          r.playersRoom.forEach((player) => {
+        const room = rooms.get(roomName);
+        if (room) {
+          room.playersRoom.forEach((player) => {
             const playerSocket = players[player]?.socket;
             if (playerSocket) {
               playerSocket.send(revealPlayerMessage);
             }
           });
+        }
+        break;
+      }
+
+      case "hidePlayer": {
+        const { roomName } = data;
+        const hidePlayerMessage = JSON.stringify({
+          event: "hidePlayer",
         });
-    }
-    if (data.event === "hidePlayer") {
-      const roomName = data.roomName;
 
-      const hidePlayerMessage = JSON.stringify({
-        event: "hidePlayer",
-      });
-
-      // Broadcast the hidePlayer event to all clients in the room
-      rooms
-        .filter((r) => r.roomName === roomName)
-        .forEach((r) => {
-          r.playersRoom.forEach((player) => {
+        const room = rooms.get(roomName);
+        if (room) {
+          room.playersRoom.forEach((player) => {
             const playerSocket = players[player]?.socket;
             if (playerSocket) {
               playerSocket.send(hidePlayerMessage);
             }
           });
-        });
+        }
+        break;
+      }
     }
   });
 
   socket.on("close", () => {
-    delete players[username];
-
-    if (currentRoom) {
-      const roomIndex = rooms.findIndex((r) => r.roomName === currentRoom);
-      if (roomIndex !== -1) {
-        rooms[roomIndex].playersRoom = rooms[roomIndex].playersRoom.filter(
-          (player) => player !== username
-        );
-
-        if (rooms[roomIndex].playersRoom.length === 0) {
-          rooms.splice(roomIndex, 1);
+    if (username && currentRoom) {
+      const room = rooms.get(currentRoom);
+      if (room) {
+        room.playersRoom = room.playersRoom.filter((player) => player !== username);
+        if (room.playersRoom.length === 0) {
+          rooms.delete(currentRoom);
           console.log("Room supprimée:", currentRoom);
         } else {
-          // Vérifier si le joueur qui quitte la room est présent dans playersRoom
-          if (rooms[roomIndex].playersRoom.includes(username)) {
+          if (room.playersRoom.includes(username)) {
             console.log("Joueur quittant la room:", username);
           }
         }
       }
     }
+
+    delete players[username];
   });
 });
