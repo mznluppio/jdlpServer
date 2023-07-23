@@ -40,23 +40,24 @@ wss.on("connection", (socket) => {
           console.error("User must set username before joining a room.");
           break;
         }
-
+      
         const { roomName } = data;
         const room = rooms.get(roomName);
-
+      
         if (room) {
           if (room.playersRoom.includes(username)) {
             console.error("User is already in the room.");
             break;
           }
-
+      
           room.playersRoom.push(username);
-
+      
           const playerJoinedEvent = JSON.stringify({
             event: "playerJoined",
             player: username,
           });
-
+      
+          // Send playerJoinedEvent to all players in the room except the joining player
           room.playersRoom
             .filter((p) => p !== username)
             .forEach((p) => {
@@ -65,25 +66,19 @@ wss.on("connection", (socket) => {
                 player.socket.send(playerJoinedEvent);
               }
             });
-
+      
           const roomDataMessage = JSON.stringify({
             event: "getRoomDataResponse",
             playersRoom: room.playersRoom,
           });
-
+      
           const joiningPlayerSocket = players[username]?.socket;
           if (joiningPlayerSocket) {
             joiningPlayerSocket.send(roomDataMessage);
           }
-
-          room.playersRoom
-            .filter((p) => p !== username) // Exclure le nouveau joueur lui-même
-            .forEach((player) => {
-              const playerSocket = players[player]?.socket;
-              if (playerSocket) {
-                playerSocket.send(roomDataMessage);
-              }
-            });
+      
+          // Send room data to the joining player
+          socket.send(roomDataMessage);
         } else {
           const roomNotFoundMessage = JSON.stringify({
             event: "roomNotFound",
