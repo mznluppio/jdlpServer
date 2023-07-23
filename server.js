@@ -76,14 +76,14 @@ wss.on("connection", (socket) => {
             joiningPlayerSocket.send(roomDataMessage);
           }
 
-          room.playersRoom.forEach((player) => {
-            const playerSocket = players[player]?.socket;
-            if (playerSocket) {
-              playerSocket.send(roomDataMessage);
-            }
-          });
-
-          socket.send(playerJoinedEvent);
+          room.playersRoom
+            .filter((p) => p !== username) // Exclure le nouveau joueur lui-même
+            .forEach((player) => {
+              const playerSocket = players[player]?.socket;
+              if (playerSocket) {
+                playerSocket.send(roomDataMessage);
+              }
+            });
         } else {
           const roomNotFoundMessage = JSON.stringify({
             event: "roomNotFound",
