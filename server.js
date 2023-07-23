@@ -3,7 +3,7 @@ const wss = new WebSocket.Server({ port: 8080 });
 console.log("Server listening on port 8080");
 
 const players = {};
-const rooms = new Map(); // Using Map for better room lookup
+const rooms = new Map();
 
 wss.on("connection", (socket) => {
   let username;
@@ -22,6 +22,11 @@ wss.on("connection", (socket) => {
       }
 
       case "createRoom": {
+        if (!username) {
+          console.error("User must set username before creating a room.");
+          break;
+        }
+
         const { roomName, createdBy } = data;
         const playersRoom = [createdBy];
         rooms.set(roomName, { roomName, createdBy, playersRoom, songs: {} });
@@ -31,19 +36,29 @@ wss.on("connection", (socket) => {
       }
 
       case "joinRoom": {
-        const { roomName, username: usernamePlayer } = data;
+        if (!username) {
+          console.error("User must set username before joining a room.");
+          break;
+        }
+
+        const { roomName } = data;
         const room = rooms.get(roomName);
 
         if (room) {
-          room.playersRoom.push(usernamePlayer);
+          if (room.playersRoom.includes(username)) {
+            console.error("User is already in the room.");
+            break;
+          }
+
+          room.playersRoom.push(username);
 
           const playerJoinedEvent = JSON.stringify({
             event: "playerJoined",
-            player: usernamePlayer,
+            player: username,
           });
 
           room.playersRoom
-            .filter((p) => p !== usernamePlayer)
+            .filter((p) => p !== username)
             .forEach((p) => {
               const player = players[p];
               if (player) {
@@ -56,7 +71,7 @@ wss.on("connection", (socket) => {
             playersRoom: room.playersRoom,
           });
 
-          const joiningPlayerSocket = players[usernamePlayer]?.socket;
+          const joiningPlayerSocket = players[username]?.socket;
           if (joiningPlayerSocket) {
             joiningPlayerSocket.send(roomDataMessage);
           }
@@ -82,7 +97,11 @@ wss.on("connection", (socket) => {
       case "getRooms": {
         const roomListMessage = JSON.stringify({
           event: "roomList",
-          rooms: Array.from(rooms.values()),
+          rooms: Array.from(rooms.values()).map(({ roomName, createdBy, playersRoom }) => ({
+            roomName,
+            createdBy,
+            playersCount: playersRoom.length,
+          })),
         });
         socket.send(roomListMessage);
         break;
