@@ -306,6 +306,8 @@ wss.on("connection", (socket) => {
         } else {
           // Vérifier si le joueur qui quitte la room est présent dans playersRoom
           if (rooms[roomIndex].playersRoom.includes(username)) {
+                        room.playersRoom = room.playersRoom.filter((player) => player !== username);
+
             console.log("Joueur quittant la room:", username);
           }
         }
