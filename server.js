@@ -292,7 +292,6 @@ wss.on("connection", (socket) => {
   });
 
   socket.on("close", () => {
-    delete players[username];
 
     if (currentRoom) {
       const roomIndex = rooms.findIndex((r) => r.roomName === currentRoom);
